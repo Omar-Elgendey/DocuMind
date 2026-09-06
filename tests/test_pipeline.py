@@ -1,146 +1,203 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.documents import Document
 
 from app.rag.pipeline import RAGPipeline
-from app.rag.prompt import build_prompt, extract_sources
-from app.rag.llm import LLMGenerationError
 
 
-@pytest.fixture
-def sample_documents():
+MODULE_PATH = "app.rag.pipeline"
+
+
+def _make_pipeline(vector_store=None):
+    retriever = MagicMock()
+    generator = MagicMock()
+    return RAGPipeline(retriever=retriever, generator=generator, vector_store=vector_store)
+
+
+def _fake_documents(n=1, source="doc.pdf"):
     return [
-        Document(
-            page_content="Cancellation is allowed within 14 days.",
-            metadata={"document_id": "doc-1", "page": 2},
-        ),
-        Document(
-            page_content="Refunds are processed within 5 business days.",
-            metadata={"document_id": "doc-1", "page": 3},
-        ),
+        Document(page_content=f"content {i}", metadata={"source": source})
+        for i in range(n)
     ]
 
 
-@pytest.fixture
-def mock_retriever(sample_documents):
-    retriever = MagicMock(name="MockDocuMindRetriever")
-    effective_retriever = MagicMock(name="MockEffectiveRetriever")
-    effective_retriever.invoke.return_value = sample_documents
-    retriever.model_copy.return_value = effective_retriever
-    return retriever
+class TestIngestDocumentInvalidInput:
+
+    def test_empty_file_path_raises_value_error(self):
+        pipeline = _make_pipeline()
+
+        with pytest.raises(ValueError, match="file_path must not be empty"):
+            pipeline.ingest_document("")
+
+    def test_whitespace_only_file_path_raises_value_error(self):
+        pipeline = _make_pipeline()
+
+        with pytest.raises(ValueError, match="file_path must not be empty"):
+            pipeline.ingest_document("   ")
 
 
-@pytest.fixture
-def mock_generator():
-    generator = MagicMock(name="MockLLMGenerator")
-    generator.generate.return_value = "Cancellation is allowed within 14 days."
-    return generator
+class TestIngestDocumentHappyPath:
 
+    def test_generates_document_id_when_not_provided(self):
+        pipeline = _make_pipeline(vector_store=MagicMock())
+        raw_docs = _fake_documents(2)
+        chunks = _fake_documents(3)
 
-@pytest.fixture
-def pipeline(mock_retriever, mock_generator):
-    return RAGPipeline(retriever=mock_retriever, generator=mock_generator)
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class, \
+             patch(f"{MODULE_PATH}.split_documents", return_value=chunks) as mock_split, \
+             patch(f"{MODULE_PATH}.add_documents", return_value=["id_0", "id_1", "id_2"]) as mock_add:
+            mock_loader_class.return_value.load.return_value = raw_docs
 
+            result = pipeline.ingest_document("report.pdf")
 
-class TestRunHappyPath:
-    def test_returns_expected_shape(self, pipeline, sample_documents):
-        result = pipeline.run("What are the cancellation terms?")
+        assert result["document_id"]
+        assert result["chunks_count"] == 3
+        mock_split.assert_called_once()
+        assert mock_split.call_args.kwargs["document_id"] == result["document_id"]
+        mock_add.assert_called_once()
 
-        assert set(result.keys()) == {"answer", "sources"}
-        assert result["answer"] == "Cancellation is allowed within 14 days."
-        assert result["sources"] == extract_sources(sample_documents)
+    def test_uses_provided_document_id(self):
+        pipeline = _make_pipeline(vector_store=MagicMock())
+        raw_docs = _fake_documents(1)
+        chunks = _fake_documents(1)
 
-    def test_creates_retriever_copy_with_requested_settings(self, pipeline, mock_retriever):
-        pipeline.run("cancellation terms", top_k=8, filter={"document_id": "doc-1"})
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class, \
+             patch(f"{MODULE_PATH}.split_documents", return_value=chunks) as mock_split, \
+             patch(f"{MODULE_PATH}.add_documents", return_value=["doc-42_0"]) as mock_add:
+            mock_loader_class.return_value.load.return_value = raw_docs
 
-        mock_retriever.model_copy.assert_called_once_with(
-            update={"top_k": 8, "metadata_filter": {"document_id": "doc-1"}}
+            result = pipeline.ingest_document("report.pdf", document_id="doc-42")
+
+        assert result["document_id"] == "doc-42"
+        assert result["chunks_count"] == 1
+        mock_split.assert_called_once_with(
+            raw_docs, chunk_size=1000, chunk_overlap=200, document_id="doc-42"
+        )
+        mock_add.assert_called_once_with(chunks, vector_store=pipeline._vector_store)
+
+    def test_passes_through_chunk_size_and_overlap(self):
+        pipeline = _make_pipeline(vector_store=MagicMock())
+        raw_docs = _fake_documents(1)
+        chunks = _fake_documents(1)
+
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class, \
+             patch(f"{MODULE_PATH}.split_documents", return_value=chunks) as mock_split, \
+             patch(f"{MODULE_PATH}.add_documents", return_value=["doc-42_0"]):
+            mock_loader_class.return_value.load.return_value = raw_docs
+
+            pipeline.ingest_document(
+                "report.pdf", document_id="doc-42", chunk_size=500, chunk_overlap=50
+            )
+
+        mock_split.assert_called_once_with(
+            raw_docs, chunk_size=500, chunk_overlap=50, document_id="doc-42"
         )
 
-    def test_uses_default_top_k_and_filter_when_not_provided(self, pipeline, mock_retriever):
-        pipeline.run("cancellation terms")
+    def test_lazily_creates_vector_store_when_not_injected(self):
+        pipeline = _make_pipeline(vector_store=None)
+        raw_docs = _fake_documents(1)
+        chunks = _fake_documents(1)
+        fake_store = MagicMock()
 
-        mock_retriever.model_copy.assert_called_once_with(
-            update={"top_k": 5, "metadata_filter": None}
-        )
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class, \
+             patch(f"{MODULE_PATH}.split_documents", return_value=chunks), \
+             patch(f"{MODULE_PATH}.add_documents", return_value=["doc-42_0"]) as mock_add, \
+             patch(f"{MODULE_PATH}.get_vector_store", return_value=fake_store) as mock_get_store:
+            mock_loader_class.return_value.load.return_value = raw_docs
 
-    def test_invokes_effective_retriever_with_plain_query_string(self, pipeline, mock_retriever):
-        pipeline.run("cancellation terms")
+            pipeline.ingest_document("report.pdf", document_id="doc-42")
 
-        effective_retriever = mock_retriever.model_copy.return_value
-        effective_retriever.invoke.assert_called_once_with("cancellation terms")
+        mock_get_store.assert_called_once()
+        mock_add.assert_called_once_with(chunks, vector_store=fake_store)
 
-    def test_generator_receives_the_actual_built_prompt(
-        self, pipeline, mock_generator, sample_documents
-    ):
-        query = "What are the cancellation terms?"
-        expected_prompt = build_prompt(query, sample_documents)
+    def test_reuses_injected_vector_store_across_calls(self):
+        injected_store = MagicMock()
+        pipeline = _make_pipeline(vector_store=injected_store)
+        raw_docs = _fake_documents(1)
+        chunks = _fake_documents(1)
 
-        pipeline.run(query)
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class, \
+             patch(f"{MODULE_PATH}.split_documents", return_value=chunks), \
+             patch(f"{MODULE_PATH}.add_documents", return_value=["id_0"]), \
+             patch(f"{MODULE_PATH}.get_vector_store") as mock_get_store:
+            mock_loader_class.return_value.load.return_value = raw_docs
 
-        mock_generator.generate.assert_called_once_with(expected_prompt)
+            pipeline.ingest_document("report.pdf", document_id="doc-1")
+            pipeline.ingest_document("report.pdf", document_id="doc-2")
 
-
-class TestRunInvalidInputPropagation:
-    def test_propagates_value_error_from_retriever_unchanged(self, pipeline, mock_retriever):
-        effective_retriever = mock_retriever.model_copy.return_value
-        effective_retriever.invoke.side_effect = ValueError(
-            "Search query cannot be empty or whitespace-only."
-        )
-
-        with pytest.raises(ValueError, match="cannot be empty"):
-            pipeline.run("")
-
-
-class TestRunOperationFailure:
-    def test_propagates_retriever_runtime_error_unchanged(self, pipeline, mock_retriever):
-        effective_retriever = mock_retriever.model_copy.return_value
-        effective_retriever.invoke.side_effect = RuntimeError("Vector store unreachable.")
-
-        with pytest.raises(RuntimeError, match="Vector store unreachable"):
-            pipeline.run("cancellation terms")
-
-    def test_propagates_generator_llm_generation_error_unchanged(self, pipeline, mock_generator):
-        mock_generator.generate.side_effect = LLMGenerationError("Groq API generation failed.")
-
-        with pytest.raises(LLMGenerationError, match="Groq API generation failed"):
-            pipeline.run("cancellation terms")
-
-    def test_does_not_wrap_exceptions_in_a_different_type(self, pipeline, mock_generator):
-        mock_generator.generate.side_effect = LLMGenerationError("boom")
-
-        try:
-            pipeline.run("cancellation terms")
-        except Exception as exc:
-            assert isinstance(exc, LLMGenerationError)
-            assert exc.__cause__ is None  # not re-raised via `from exc`
+        mock_get_store.assert_not_called()
 
 
-class TestRunEdgeCases:
-    def test_empty_documents_returns_fallback_answer_and_no_sources(
-        self, pipeline, mock_retriever, mock_generator
-    ):
-        effective_retriever = mock_retriever.model_copy.return_value
-        effective_retriever.invoke.return_value = []
-        mock_generator.generate.return_value = (
-            "I don't have enough information from the provided documents to answer that."
-        )
+class TestIngestDocumentEdgeCases:
 
-        result = pipeline.run("something unrelated to the document")
+    def test_no_chunks_produced_returns_zero_count_without_storing(self):
+        pipeline = _make_pipeline(vector_store=MagicMock())
+        raw_docs = _fake_documents(1)
 
-        assert result["sources"] == []
-        assert "don't have enough information" in result["answer"]
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class, \
+             patch(f"{MODULE_PATH}.split_documents", return_value=[]), \
+             patch(f"{MODULE_PATH}.add_documents") as mock_add:
+            mock_loader_class.return_value.load.return_value = raw_docs
 
-    def test_empty_documents_still_builds_a_fallback_prompt_for_the_generator(
-        self, pipeline, mock_retriever, mock_generator
-    ):
-        effective_retriever = mock_retriever.model_copy.return_value
-        effective_retriever.invoke.return_value = []
+            result = pipeline.ingest_document("empty.txt", document_id="doc-99")
 
-        query = "something unrelated to the document"
-        expected_prompt = build_prompt(query, [])
+        assert result == {"document_id": "doc-99", "chunks_count": 0}
+        mock_add.assert_not_called()
 
-        pipeline.run(query)
 
-        mock_generator.generate.assert_called_once_with(expected_prompt)
+class TestIngestDocumentOperationFailure:
+
+    def test_loader_error_propagates(self):
+        pipeline = _make_pipeline(vector_store=MagicMock())
+
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class:
+            mock_loader_class.return_value.load.side_effect = FileNotFoundError(
+                "missing file"
+            )
+
+            with pytest.raises(FileNotFoundError):
+                pipeline.ingest_document("missing.pdf")
+
+    def test_splitter_error_propagates(self):
+        pipeline = _make_pipeline(vector_store=MagicMock())
+        raw_docs = _fake_documents(1)
+
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class, \
+             patch(
+                 f"{MODULE_PATH}.split_documents",
+                 side_effect=ValueError("chunk_size must be greater than 0"),
+             ):
+            mock_loader_class.return_value.load.return_value = raw_docs
+
+            with pytest.raises(ValueError):
+                pipeline.ingest_document("report.pdf", chunk_size=0)
+
+    def test_unexpected_storage_error_is_wrapped_in_runtime_error(self):
+        pipeline = _make_pipeline(vector_store=MagicMock())
+        raw_docs = _fake_documents(1)
+        chunks = _fake_documents(1)
+
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class, \
+             patch(f"{MODULE_PATH}.split_documents", return_value=chunks), \
+             patch(f"{MODULE_PATH}.add_documents", side_effect=Exception("chroma down")):
+            mock_loader_class.return_value.load.return_value = raw_docs
+
+            with pytest.raises(RuntimeError, match="Failed to store document chunks"):
+                pipeline.ingest_document("report.pdf")
+
+    def test_runtime_error_from_storage_is_chained(self):
+        pipeline = _make_pipeline(vector_store=MagicMock())
+        raw_docs = _fake_documents(1)
+        chunks = _fake_documents(1)
+        original_exc = Exception("chroma down")
+
+        with patch(f"{MODULE_PATH}.UniversalLoader") as mock_loader_class, \
+             patch(f"{MODULE_PATH}.split_documents", return_value=chunks), \
+             patch(f"{MODULE_PATH}.add_documents", side_effect=original_exc):
+            mock_loader_class.return_value.load.return_value = raw_docs
+
+            with pytest.raises(RuntimeError) as exc_info:
+                pipeline.ingest_document("report.pdf")
+
+        assert exc_info.value.__cause__ is original_exc
