@@ -2,110 +2,136 @@ import logging
 from pathlib import Path
 
 from langchain_core.documents import Document
-from langchain_community.document_loaders import PyMuPDFLoader
-
-
-# Configure logging for clean execution tracking
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+from langchain_community.document_loaders import (
+    PyMuPDFLoader,
+    Docx2txtLoader,
+    UnstructuredPowerPointLoader,
+    TextLoader,
 )
+
 
 logger = logging.getLogger(__name__)
 
 
-def load_pdf_documents(path: str) -> list[Document]:
+class UniversalLoader:
     """
-    Load PDF documents from a file or a directory containing PDF files.
-
-    Args:
-        path (str): Path to a PDF file or a directory containing PDF files.
-
-    Returns:
-        list[Document]: A list of loaded PDF page documents.
-
-    Raises:
-        FileNotFoundError: If the specified path does not exist.
-        ValueError: If the specified file is not a PDF.
-        RuntimeError: If an unexpected error occurs during PDF loading.
+    Load supported document formats and return a unified
+    list of LangChain Document objects.
     """
 
-    documents: list[Document] = []
-    path_obj = Path(path)
+    SUPPORTED_EXTENSIONS = {
+        ".pdf": PyMuPDFLoader,
+        ".docx": Docx2txtLoader,
+        ".pptx": UnstructuredPowerPointLoader,
+        ".txt": TextLoader,
+    }
 
-    try:
-        # Check if the provided path exists
-        if not path_obj.exists():
+    def __init__(self, path: str):
+        self.path = Path(path)
+
+    def load(self) -> list[Document]:
+        """
+        Load documents from a file or directory.
+
+        Returns:
+            list[Document]: Loaded LangChain documents.
+
+        Raises:
+            FileNotFoundError: If the path does not exist.
+            ValueError: If the file format is not supported.
+            RuntimeError: If an unexpected loading error occurs.
+        """
+
+        if not self.path.exists():
             raise FileNotFoundError(
-                f"The specified path does not exist: {path}"
+                f"The specified path does not exist: {self.path}"
             )
 
-        # Handle a single PDF file
-        if path_obj.is_file():
+        try:
+            if self.path.is_file():
+                return self._load_file(self.path)
 
-            if path_obj.suffix.lower() != ".pdf":
-                raise ValueError(
-                    f"The file is not a PDF: {path}"
-                )
+            if self.path.is_dir():
+                return self._load_directory()
 
-            logger.info("Loading single PDF file: %s", path)
-
-            loader = PyMuPDFLoader(str(path_obj))
-            documents.extend(loader.load())
-
-        # Handle a directory containing PDF files
-        elif path_obj.is_dir():
-
-            pdf_files = sorted(
-                file
-                for file in path_obj.iterdir()
-                if file.is_file() and file.suffix.lower() == ".pdf"
+            raise ValueError(
+                f"The specified path is neither a file nor a directory: "
+                f"{self.path}"
             )
 
-            if not pdf_files:
-                logger.warning(
-                    "No PDF files found in directory: %s",
-                    path
+        except (FileNotFoundError, ValueError):
+            raise
+
+        except Exception as e:
+            logger.exception(
+                "Unexpected error while loading: %s",
+                self.path
+            )
+            raise RuntimeError(
+                f"Document loading failed: {e}"
+            ) from e
+
+    def _load_file(self, file_path: Path) -> list[Document]:
+        """Load a single supported file."""
+
+        extension = file_path.suffix.lower()
+
+        loader_class = self.SUPPORTED_EXTENSIONS.get(extension)
+
+        if loader_class is None:
+            raise ValueError(
+                f"Unsupported file format: {extension}"
+            )
+
+        logger.info("Loading file: %s", file_path.name)
+
+        loader = loader_class(str(file_path))
+        documents = loader.load()
+
+        logger.info(
+            "Loaded %d document(s) from %s",
+            len(documents),
+            file_path.name,
+        )
+
+        return documents
+
+    def _load_directory(self) -> list[Document]:
+        """Load all supported files from a directory."""
+
+        documents: list[Document] = []
+
+        files = sorted(
+            file
+            for file in self.path.iterdir()
+            if file.is_file()
+            and file.suffix.lower() in self.SUPPORTED_EXTENSIONS
+        )
+
+        if not files:
+            logger.warning(
+                "No supported files found in directory: %s",
+                self.path,
+            )
+            return documents
+
+        for file_path in files:
+            try:
+                documents.extend(
+                    self._load_file(file_path)
                 )
-                return documents
 
-            # Load each PDF independently
-            for pdf_file in pdf_files:
+            except Exception as e:
+                logger.error(
+                    "Failed to load file %s: %s",
+                    file_path.name,
+                    e,
+                )
 
-                try:
-                    logger.info(
-                        "Loading PDF file: %s",
-                        pdf_file.name
-                    )
+        logger.info(
+            "Successfully loaded %d document(s) from directory: %s",
+            len(documents),
+            self.path,
+        )
 
-                    loader = PyMuPDFLoader(str(pdf_file))
-                    documents.extend(loader.load())
-
-                except Exception as e:
-                    # Log the error and continue with the remaining files
-                    logger.error(
-                        "Failed to load file %s: %s",
-                        pdf_file.name,
-                        e
-                    )
-
-    except FileNotFoundError:
-        logger.exception("Path not found: %s", path)
-        raise
-
-    except ValueError:
-        logger.exception("Invalid PDF file: %s", path)
-        raise
-
-    except Exception as e:
-        logger.exception("Unexpected error during PDF loading")
-        raise RuntimeError(
-            f"PDF loading failed: {e}"
-        ) from e
-
-    logger.info(
-        "Successfully loaded a total of %d document page(s).",
-        len(documents)
-    )
-
-    return documents
+        return documents
