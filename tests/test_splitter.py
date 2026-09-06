@@ -1,155 +1,173 @@
-import sys
-from pathlib import Path
-
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 from langchain_core.documents import Document
+
 from app.rag.splitter import split_documents
 
 
-def test_splitter_returns_documents():
-    document = Document(page_content="This is a test document.")
-
-    chunks = split_documents([document])
-
-    assert isinstance(chunks, list)
-    assert all(isinstance(chunk, Document) for chunk in chunks)
+MODULE_PATH = "app.rag.splitter"
 
 
-def test_long_document_is_split():
-    text = "This is a sentence. " * 300
-    document = Document(page_content=text)
-
-    chunks = split_documents(
-        [document],
-        chunk_size=1000,
-        chunk_overlap=200
-    )
-
-    assert len(chunks) > 1
+def _make_documents(n=1, content="some content here", **metadata):
+    return [
+        Document(page_content=content, metadata=dict(metadata))
+        for _ in range(n)
+    ]
 
 
-def test_chunks_are_not_empty():
-    text = "This is a sentence. " * 300
-    document = Document(page_content=text)
+class TestSplitDocumentsInvalidInput:
 
-    chunks = split_documents([document])
+    def test_empty_document_list_returns_empty_list(self):
+        result = split_documents([])
 
-    assert all(chunk.page_content.strip() for chunk in chunks)
+        assert result == []
 
+    def test_chunk_size_zero_raises_value_error(self):
+        docs = _make_documents()
 
-def test_chunks_do_not_exceed_chunk_size():
-    text = "This is a sentence. " * 300
-    document = Document(page_content=text)
+        with pytest.raises(ValueError, match="chunk_size must be greater than 0"):
+            split_documents(docs, chunk_size=0)
 
-    chunk_size = 1000
+    def test_negative_chunk_size_raises_value_error(self):
+        docs = _make_documents()
 
-    chunks = split_documents(
-        [document],
-        chunk_size=chunk_size,
-        chunk_overlap=200
-    )
+        with pytest.raises(ValueError, match="chunk_size must be greater than 0"):
+            split_documents(docs, chunk_size=-10)
 
-    assert all(
-        len(chunk.page_content) <= chunk_size
-        for chunk in chunks
-    )
+    def test_negative_chunk_overlap_raises_value_error(self):
+        docs = _make_documents()
 
+        with pytest.raises(ValueError, match="chunk_overlap must be >= 0"):
+            split_documents(docs, chunk_overlap=-1)
 
-def test_metadata_is_preserved():
-    document = Document(
-        page_content="This is a sentence. " * 100,
-        metadata={
-            "source": "test.pdf",
-            "page": 1
-        }
-    )
+    def test_chunk_overlap_equal_to_chunk_size_raises_value_error(self):
+        docs = _make_documents()
 
-    chunks = split_documents([document])
+        with pytest.raises(ValueError, match="chunk_overlap must be >= 0"):
+            split_documents(docs, chunk_size=500, chunk_overlap=500)
 
-    assert len(chunks) > 1
+    def test_chunk_overlap_greater_than_chunk_size_raises_value_error(self):
+        docs = _make_documents()
 
-    for chunk in chunks:
-        assert chunk.metadata["source"] == "test.pdf"
-        assert chunk.metadata["page"] == 1
+        with pytest.raises(ValueError, match="chunk_overlap must be >= 0"):
+            split_documents(docs, chunk_size=500, chunk_overlap=600)
 
+    def test_empty_document_id_raises_value_error(self):
+        docs = _make_documents()
 
-def test_short_document_stays_one_chunk():
-    document = Document(
-        page_content="This is a short document."
-    )
+        with pytest.raises(ValueError, match="document_id must not be empty"):
+            split_documents(docs, document_id="")
 
-    chunks = split_documents(
-        [document],
-        chunk_size=1000,
-        chunk_overlap=200
-    )
+    def test_whitespace_only_document_id_raises_value_error(self):
+        docs = _make_documents()
 
-    assert len(chunks) == 1
+        with pytest.raises(ValueError, match="document_id must not be empty"):
+            split_documents(docs, document_id="   ")
 
 
-def test_empty_input_returns_empty_list():
-    chunks = split_documents([])
+class TestSplitDocumentsHappyPath:
 
-    assert chunks == []
+    def test_splits_long_document_into_multiple_chunks(self):
+        long_text = "word " * 500
+        docs = _make_documents(content=long_text, source="report.pdf")
+
+        result = split_documents(docs, chunk_size=200, chunk_overlap=20)
+
+        assert len(result) > 1
+        assert all(isinstance(chunk, Document) for chunk in result)
+
+    def test_short_document_returns_single_chunk(self):
+        docs = _make_documents(content="short text", source="note.txt")
+
+        result = split_documents(docs, chunk_size=1000, chunk_overlap=200)
+
+        assert len(result) == 1
+        assert result[0].page_content == "short text"
+
+    def test_preserves_original_metadata(self):
+        docs = _make_documents(content="short text", source="note.txt", page=2)
+
+        result = split_documents(docs, chunk_size=1000, chunk_overlap=200)
+
+        assert result[0].metadata["source"] == "note.txt"
+        assert result[0].metadata["page"] == 2
+
+    def test_filters_out_empty_or_whitespace_only_chunks(self):
+        docs = [
+            Document(page_content="real content", metadata={}),
+            Document(page_content="   ", metadata={}),
+            Document(page_content="", metadata={}),
+        ]
+
+        result = split_documents(docs, chunk_size=1000, chunk_overlap=200)
+
+        assert len(result) == 1
+        assert result[0].page_content == "real content"
 
 
-def test_invalid_chunk_size():
-    document = Document(page_content="Some text.")
+class TestSplitDocumentsWithDocumentId:
 
-    with pytest.raises(ValueError):
-        split_documents(
-            [document],
-            chunk_size=0
+    def test_document_id_is_stamped_on_every_chunk(self):
+        long_text = "word " * 500
+        docs = _make_documents(content=long_text, source="report.pdf")
+
+        result = split_documents(
+            docs, chunk_size=200, chunk_overlap=20, document_id="doc-123"
         )
 
+        assert len(result) > 1
+        assert all(chunk.metadata["document_id"] == "doc-123" for chunk in result)
 
-def test_invalid_chunk_overlap():
-    document = Document(page_content="Some text.")
+    def test_document_id_does_not_overwrite_existing_metadata(self):
+        docs = _make_documents(content="short text", source="note.txt", page=2)
 
-    with pytest.raises(ValueError):
-        split_documents(
-            [document],
-            chunk_size=100,
-            chunk_overlap=100
-        )
+        result = split_documents(docs, document_id="doc-123")
+
+        assert result[0].metadata["source"] == "note.txt"
+        assert result[0].metadata["page"] == 2
+        assert result[0].metadata["document_id"] == "doc-123"
+
+    def test_no_document_id_key_when_not_provided(self):
+        docs = _make_documents(content="short text", source="note.txt")
+
+        result = split_documents(docs)
+
+        assert "document_id" not in result[0].metadata
+
+    def test_document_id_not_stamped_on_filtered_out_chunks(self):
+        docs = [
+            Document(page_content="real content", metadata={}),
+            Document(page_content="   ", metadata={}),
+        ]
+
+        result = split_documents(docs, document_id="doc-123")
+
+        assert len(result) == 1
+        assert result[0].metadata["document_id"] == "doc-123"
 
 
-def test_chunk_overlap():
-    text = "a" * 1000
+class TestSplitDocumentsOperationFailure:
 
-    chunks = split_documents(
-        [Document(page_content=text)],
-        chunk_size=200,
-        chunk_overlap=50
-    )
+    def test_unexpected_error_is_wrapped_in_runtime_error(self):
+        docs = _make_documents()
 
-    assert len(chunks) > 1
+        with patch(
+            f"{MODULE_PATH}.RecursiveCharacterTextSplitter.split_documents",
+            side_effect=Exception("splitter exploded"),
+        ):
+            with pytest.raises(RuntimeError, match="Document splitting failed"):
+                split_documents(docs)
 
-    assert (
-        chunks[0].page_content[-50:]
-        == chunks[1].page_content[:50]
-    )
-    
-    
-    
-if __name__ == "__main__":
-    document = Document(
-        page_content="This is a test document. " * 100
-    )
+    def test_runtime_error_is_chained_from_original_exception(self):
+        docs = _make_documents()
+        original_exc = Exception("splitter exploded")
 
-    chunks = split_documents(
-        [document],
-        chunk_size=200,
-        chunk_overlap=50
-    )
+        with patch(
+            f"{MODULE_PATH}.RecursiveCharacterTextSplitter.split_documents",
+            side_effect=original_exc,
+        ):
+            with pytest.raises(RuntimeError) as exc_info:
+                split_documents(docs)
 
-    print(f"Number of chunks: {len(chunks)}")
-
-    for i, chunk in enumerate(chunks, start=1):
-        print("\n" + "=" * 60)
-        print(f"CHUNK {i}")
-        print(f"Length: {len(chunk.page_content)}")
-        print(chunk.page_content)
+        assert exc_info.value.__cause__ is original_exc

@@ -1,11 +1,10 @@
 import logging
-from typing import List
+from typing import List, Optional
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
-# Configure logging for execution tracking
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
@@ -17,7 +16,8 @@ logger = logging.getLogger(__name__)
 def split_documents(
     documents: List[Document],
     chunk_size: int = 1000,
-    chunk_overlap: int = 200
+    chunk_overlap: int = 200,
+    document_id: Optional[str] = None,
 ) -> List[Document]:
     """
     Split a list of LangChain Document objects into smaller chunks using
@@ -27,12 +27,14 @@ def split_documents(
         documents (List[Document]): The documents to split.
         chunk_size (int): The maximum number of characters for each chunk.
         chunk_overlap (int): The number of overlapping characters between chunks.
+        document_id (Optional[str]): If provided, stamped into the metadata of
+            every resulting chunk under the "document_id" key.
 
     Returns:
         List[Document]: A list of valid, chunked Document objects.
 
     Raises:
-        ValueError: If chunk_size or chunk_overlap is invalid.
+        ValueError: If chunk_size, chunk_overlap, or document_id is invalid.
         RuntimeError: If an unexpected error occurs during splitting.
     """
 
@@ -49,6 +51,9 @@ def split_documents(
         raise ValueError(
             "chunk_overlap must be >= 0 and smaller than chunk_size."
         )
+
+    if document_id is not None and not document_id.strip():
+        raise ValueError("document_id must not be empty or whitespace.")
 
     try:
         logger.info(
@@ -68,11 +73,12 @@ def split_documents(
 
         chunks = text_splitter.split_documents(documents)
 
-        # Filter out empty or whitespace-only chunks
         valid_chunks: List[Document] = []
 
         for chunk in chunks:
             if chunk.page_content and chunk.page_content.strip():
+                if document_id is not None:
+                    chunk.metadata["document_id"] = document_id
                 valid_chunks.append(chunk)
             else:
                 logger.warning(
