@@ -291,3 +291,134 @@ class TestGetDocumentFailure:
 
         with pytest.raises(RuntimeError, match="Failed to retrieve document for id=doc-1."):
             service.get_document(db=mock_db, document_id="doc-1")
+
+
+class TestDeleteDocumentSuccess:
+
+    @patch(f"{MODULE_PATH}.os.remove")
+    @patch(f"{MODULE_PATH}.os.path.exists")
+    @patch(f"{MODULE_PATH}.delete_documents_by_id")
+    @patch(f"{MODULE_PATH}.repository")
+    def test_delete_document_success_with_existing_file(
+        self, mock_repo, mock_delete_chroma, mock_exists, mock_remove, service, mock_db
+    ):
+        doc_id = "doc_del_123"
+        file_path = "data/uploads/paper.pdf"
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = file_path
+        mock_repo.get_document.return_value = mock_doc
+        mock_exists.return_value = True
+
+        service.delete_document(db=mock_db, document_id=doc_id)
+
+        mock_repo.get_document.assert_called_once_with(db=mock_db, document_id=doc_id)
+        mock_delete_chroma.assert_called_once_with(document_id=doc_id)
+        mock_exists.assert_called_once_with(file_path)
+        mock_remove.assert_called_once_with(file_path)
+        mock_repo.soft_delete_document.assert_called_once_with(db=mock_db, document_id=doc_id)
+
+    @patch(f"{MODULE_PATH}.os.remove")
+    @patch(f"{MODULE_PATH}.os.path.exists")
+    @patch(f"{MODULE_PATH}.delete_documents_by_id")
+    @patch(f"{MODULE_PATH}.repository")
+    def test_delete_document_success_when_file_does_not_exist_on_disk(
+        self, mock_repo, mock_delete_chroma, mock_exists, mock_remove, service, mock_db
+    ):
+        doc_id = "doc_del_456"
+        file_path = "data/uploads/missing.pdf"
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = file_path
+        mock_repo.get_document.return_value = mock_doc
+        mock_exists.return_value = False
+
+        service.delete_document(db=mock_db, document_id=doc_id)
+
+        mock_repo.get_document.assert_called_once_with(db=mock_db, document_id=doc_id)
+        mock_delete_chroma.assert_called_once_with(document_id=doc_id)
+        mock_exists.assert_called_once_with(file_path)
+        mock_remove.assert_not_called()
+        mock_repo.soft_delete_document.assert_called_once_with(db=mock_db, document_id=doc_id)
+
+
+class TestDeleteDocumentFailure:
+
+    @patch(f"{MODULE_PATH}.repository")
+    def test_delete_document_raises_value_error_if_not_found(
+        self, mock_repo, service, mock_db
+    ):
+        doc_id = "missing_doc"
+        mock_repo.get_document.return_value = None
+
+        with pytest.raises(ValueError, match=f"No active document found with id={doc_id}"):
+            service.delete_document(db=mock_db, document_id=doc_id)
+
+        mock_repo.get_document.assert_called_once_with(db=mock_db, document_id=doc_id)
+        mock_repo.soft_delete_document.assert_not_called()
+
+    @patch(f"{MODULE_PATH}.delete_documents_by_id")
+    @patch(f"{MODULE_PATH}.repository")
+    def test_delete_document_chroma_failure_propagates_and_aborts_db_deletion(
+        self, mock_repo, mock_delete_chroma, service, mock_db
+    ):
+        doc_id = "doc_chroma_err"
+        mock_doc = MagicMock()
+        mock_doc.file_path = "data/uploads/file.pdf"
+        mock_repo.get_document.return_value = mock_doc
+
+        mock_delete_chroma.side_effect = RuntimeError("Chroma connection error")
+
+        with pytest.raises(RuntimeError, match="Chroma connection error"):
+            service.delete_document(db=mock_db, document_id=doc_id)
+
+        mock_delete_chroma.assert_called_once_with(document_id=doc_id)
+        mock_repo.soft_delete_document.assert_not_called()
+
+    @patch(f"{MODULE_PATH}.os.remove")
+    @patch(f"{MODULE_PATH}.os.path.exists")
+    @patch(f"{MODULE_PATH}.delete_documents_by_id")
+    @patch(f"{MODULE_PATH}.repository")
+    def test_delete_document_file_removal_failure_propagates_and_aborts_db_deletion(
+        self, mock_repo, mock_delete_chroma, mock_exists, mock_remove, service, mock_db
+    ):
+        doc_id = "doc_file_err"
+        file_path = "data/uploads/locked.pdf"
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = file_path
+        mock_repo.get_document.return_value = mock_doc
+        mock_exists.return_value = True
+        mock_remove.side_effect = OSError("Permission denied")
+
+        with pytest.raises(OSError, match="Permission denied"):
+            service.delete_document(db=mock_db, document_id=doc_id)
+
+        mock_delete_chroma.assert_called_once_with(document_id=doc_id)
+        mock_remove.assert_called_once_with(file_path)
+        mock_repo.soft_delete_document.assert_not_called()
+
+    @patch(f"{MODULE_PATH}.os.remove")
+    @patch(f"{MODULE_PATH}.os.path.exists")
+    @patch(f"{MODULE_PATH}.delete_documents_by_id")
+    @patch(f"{MODULE_PATH}.repository")
+    def test_delete_document_final_soft_delete_failure_propagates(
+        self, mock_repo, mock_delete_chroma, mock_exists, mock_remove, service, mock_db
+    ):
+        doc_id = "doc_softdel_err"
+        file_path = "data/uploads/report.pdf"
+
+        mock_doc = MagicMock()
+        mock_doc.file_path = file_path
+        mock_repo.get_document.return_value = mock_doc
+        mock_exists.return_value = True
+        mock_repo.soft_delete_document.side_effect = RuntimeError(
+            "Failed to soft-delete document for id=doc_softdel_err."
+        )
+
+        with pytest.raises(RuntimeError, match="Failed to soft-delete document"):
+            service.delete_document(db=mock_db, document_id=doc_id)
+
+        mock_delete_chroma.assert_called_once_with(document_id=doc_id)
+        mock_remove.assert_called_once_with(file_path)
+        mock_repo.soft_delete_document.assert_called_once_with(db=mock_db, document_id=doc_id)

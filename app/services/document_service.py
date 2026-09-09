@@ -1,18 +1,20 @@
 import logging
+import os
 from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.db import repository
 from app.db.models import Document
 from app.rag.pipeline import RAGPipeline
+from app.rag.vector_store import delete_documents_by_id
 
 logger = logging.getLogger(__name__)
 
 
 class DocumentService:
     """
-    Orchestrates document ingestion by managing processing state transitions
-    in the MySQL repository and coordinating execution with the RAG pipeline.
+    Orchestrates document ingestion, lifecycle management, and deletion by
+    coordinating the MySQL repository, the RAG pipeline, and the filesystem.
     """
 
     def __init__(self, pipeline: RAGPipeline) -> None:
@@ -56,7 +58,6 @@ class DocumentService:
         """
         logger.info("Registering document '%s' (ID: %s) as PENDING.", filename, document_id)
 
-        # 1. Register PENDING state in MySQL
         repository.create_pending_document(
             db=db,
             document_id=document_id,
@@ -65,7 +66,6 @@ class DocumentService:
         )
 
         try:
-            # 2. Execute RAG Ingestion Pipeline
             logger.info("Starting pipeline ingestion for document ID: %s", document_id)
             ingestion_result: Dict[str, Any] = self.pipeline.ingest_document(
                 document_id=document_id,
@@ -74,7 +74,6 @@ class DocumentService:
 
             chunks_count: int = ingestion_result.get("chunks_count", 0)
 
-            # 3. Transition state to COMPLETED
             repository.mark_document_completed(
                 db=db,
                 document_id=document_id,
@@ -99,7 +98,6 @@ class DocumentService:
                 error_message,
             )
 
-            # 4. Transition state to FAILED and re-raise exception for caller handling
             repository.mark_document_failed(
                 db=db,
                 document_id=document_id,
@@ -160,3 +158,53 @@ class DocumentService:
             db=db,
             document_id=document_id,
         )
+
+    def delete_document(
+        self,
+        db: Session,
+        document_id: str,
+    ) -> None:
+        """
+        Orchestrate the end-to-end deletion flow for a document.
+
+        Deletion Flow:
+        1. Fetch the document record to obtain its file_path.
+        2. Delete all associated chunks from ChromaDB.
+        3. Delete the file from the filesystem, if it still exists.
+        4. Soft delete the document record in MySQL (final step).
+
+        The order is intentional: MySQL is updated last so that, if any
+        earlier step fails, the document remains visible and the deletion
+        can safely be retried instead of silently losing track of data
+        that still exists in Chroma or on disk.
+
+        Args:
+            db: Active SQLAlchemy session provided by the API layer.
+            document_id: Unique identifier of the document to delete.
+
+        Raises:
+            ValueError: If no active document exists with the given ID.
+            RuntimeError: Propagated if Chroma deletion or the final
+                MySQL soft delete fails.
+        """
+        document = repository.get_document(db=db, document_id=document_id)
+
+        if document is None:
+            raise ValueError(f"No active document found with id={document_id}")
+
+        logger.info("Deleting chunks from ChromaDB for document ID: %s", document_id)
+        delete_documents_by_id(document_id=document_id)
+
+        if os.path.exists(document.file_path):
+            logger.info("Deleting file from filesystem: %s", document.file_path)
+            os.remove(document.file_path)
+        else:
+            logger.warning(
+                "File not found on filesystem for document ID %s at path '%s'; skipping.",
+                document_id,
+                document.file_path,
+            )
+
+        repository.soft_delete_document(db=db, document_id=document_id)
+
+        logger.info("Document ID %s successfully deleted.", document_id)
