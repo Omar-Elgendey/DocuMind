@@ -72,9 +72,11 @@ class TestIngestDocumentSuccess:
 
 class TestIngestDocumentPipelineFailure:
 
+    @patch(f"{MODULE_PATH}.os.remove")
+    @patch(f"{MODULE_PATH}.os.path.exists")
     @patch(f"{MODULE_PATH}.repository")
     def test_pipeline_failure_marks_failed_and_reraises(
-        self, mock_repo, service, mock_pipeline, mock_db
+        self, mock_repo, mock_exists, mock_remove, service, mock_pipeline, mock_db
     ):
         document_id = "doc_error_456"
         filename = "corrupt.pdf"
@@ -82,6 +84,7 @@ class TestIngestDocumentPipelineFailure:
         error_text = "UniversalLoader failed to read document."
 
         mock_pipeline.ingest_document.side_effect = RuntimeError(error_text)
+        mock_exists.return_value = True
 
         with pytest.raises(RuntimeError, match=error_text):
             service.ingest_document(
@@ -103,6 +106,8 @@ class TestIngestDocumentPipelineFailure:
             error_message=error_text,
         )
         mock_repo.mark_document_completed.assert_not_called()
+        mock_exists.assert_called_once_with(file_path)
+        mock_remove.assert_called_once_with(file_path)
 
 
 class TestIngestDocumentPendingCreationFailure:
@@ -129,9 +134,11 @@ class TestIngestDocumentPendingCreationFailure:
 
 class TestIngestDocumentMarkCompletedFailure:
 
+    @patch(f"{MODULE_PATH}.os.remove")
+    @patch(f"{MODULE_PATH}.os.path.exists")
     @patch(f"{MODULE_PATH}.repository")
     def test_mark_completed_failure_triggers_mark_failed_and_reraises(
-        self, mock_repo, service, mock_pipeline, mock_db
+        self, mock_repo, mock_exists, mock_remove, service, mock_pipeline, mock_db
     ):
         document_id = "doc_999"
         filename = "report.pdf"
@@ -144,6 +151,7 @@ class TestIngestDocumentMarkCompletedFailure:
         }
         completion_error = RuntimeError("Failed to update document status to completed")
         mock_repo.mark_document_completed.side_effect = completion_error
+        mock_exists.return_value = True
 
         with pytest.raises(RuntimeError, match="Failed to update document status to completed"):
             service.ingest_document(
@@ -163,6 +171,8 @@ class TestIngestDocumentMarkCompletedFailure:
             document_id=document_id,
             error_message=str(completion_error),
         )
+        mock_exists.assert_called_once_with(file_path)
+        mock_remove.assert_called_once_with(file_path)
 
 
 class TestListDocumentsSuccess:

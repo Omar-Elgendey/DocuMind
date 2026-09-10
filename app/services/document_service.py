@@ -103,6 +103,10 @@ class DocumentService:
                 document_id=document_id,
                 error_message=error_message,
             )
+            
+            if os.path.exists(file_path):
+                logger.info("Cleaning up file after failed ingestion: %s", file_path)
+                os.remove(file_path)
             raise
 
     def list_documents(
