@@ -3,20 +3,26 @@ import uuid
 from pathlib import Path
 
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File,Query,status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_document_service
 from app.db.session import get_db
-from app.db.models import Document, DocumentStatus
 from app.rag.loaders import UniversalLoader
 from app.services.document_service import DocumentService
+
+from app.schemas.document import (
+    DocumentUploadResponse,
+    DocumentResponse,
+    ChatRequest,
+    ChatResponse,
+)
 
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./data/uploads")
-MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024  
+MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
 
 
 @router.post("", status_code=201)
@@ -24,7 +30,7 @@ def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     service: DocumentService = Depends(get_document_service),
-) -> dict:
+) -> DocumentUploadResponse:
     """
     Upload a document file, ingest it into the RAG pipeline, and
     persist its metadata and processing status in MySQL.
@@ -55,7 +61,7 @@ def upload_document(
         f.write(contents)
 
     try:
-      return service.ingest_document(
+        return service.ingest_document(
             db=db,
             document_id=document_id,
             filename=file.filename,
@@ -64,6 +70,7 @@ def upload_document(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+
 @router.get("")
 def list_documents(
     db: Session = Depends(get_db),
@@ -71,7 +78,7 @@ def list_documents(
     status_filter: Optional[str] = Query(None, alias="status", description="Filter by document status"),
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
-) -> list[dict]:
+) -> list[DocumentResponse]:
     """
     List documents with optional filtering by status and pagination.
     """
@@ -82,16 +89,7 @@ def list_documents(
             limit=limit,
             offset=offset,
         )
-        return [
-            {
-                "id": doc.id,
-                "original_filename": doc.original_filename,
-                "status": doc.status,
-                "chunks_count": doc.chunks_count,
-                "created_at": doc.created_at,
-            }
-            for doc in documents
-        ]
+        return [DocumentResponse.model_validate(doc) for doc in documents]
     except ValueError as ve:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -104,13 +102,12 @@ def list_documents(
         ) from exc
 
 
-
 @router.get("/{document_id}")
 def get_document(
     document_id: str,
     db: Session = Depends(get_db),
     service: DocumentService = Depends(get_document_service),
-) -> dict:
+) -> DocumentResponse:
     """
     Retrieve details of a single document by its ID.
     """
@@ -133,15 +130,9 @@ def get_document(
             detail="Document not found",
         )
 
-    return {
-        "id": document.id,
-        "original_filename": document.original_filename,
-        "status": document.status,
-        "chunks_count": document.chunks_count,
-        "created_at": document.created_at,
-    }
-    
-    
+    return DocumentResponse.model_validate(document)
+
+
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(
     document_id: str,
@@ -154,30 +145,24 @@ def delete_document(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve)) from ve
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
-      
+
 
 @router.post("/{document_id}/chat")
 def chat_with_document(
     document_id: str,
-    request: dict,  
+    request: ChatRequest,
     db: Session = Depends(get_db),
     service: DocumentService = Depends(get_document_service),
-) -> dict:
+) -> ChatResponse:
     """
     Query a completed document using the RAG pipeline.
     """
-    question = request.get("question")
-    if not question or not str(question).strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Question field is required and must not be empty.",
-        )
-
     try:
         result = service.chat(
             db=db,
             document_id=document_id,
-            question=question,
+            question=request.question,
+            top_k=request.top_k,
         )
 
         return {
@@ -193,7 +178,7 @@ def chat_with_document(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=error_msg,
             ) from ve
-        
+
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_msg,
@@ -204,5 +189,3 @@ def chat_with_document(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
-        
-        return result
