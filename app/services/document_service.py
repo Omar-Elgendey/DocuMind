@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.db import repository
-from app.db.models import Document
+from app.db.models import Document, DocumentStatus
 from app.rag.pipeline import RAGPipeline
 from app.rag.vector_store import delete_documents_by_id
 
@@ -212,3 +212,29 @@ class DocumentService:
         repository.soft_delete_document(db=db, document_id=document_id)
 
         logger.info("Document ID %s successfully deleted.", document_id)
+        
+    def chat(
+        self,
+        db: Session,
+        document_id: str,
+        question: str,
+        top_k: int = 5,
+    ) -> dict:
+        """
+        Query a completed document using the RAG pipeline.
+        """
+        document = repository.get_document(db=db, document_id=document_id)
+
+        if document is None:
+            raise ValueError(f"No active document found with id={document_id}")
+
+        if document.status != DocumentStatus.COMPLETED.value:
+            raise ValueError(
+                f"Document is not ready for chat (status={document.status})"
+            )
+
+        return self.pipeline.run(
+            query=question,
+            top_k=top_k,
+            filter={"document_id": document_id},
+        )

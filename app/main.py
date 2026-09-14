@@ -1,8 +1,11 @@
+import logging
+
 from dotenv import load_dotenv
+import fastapi
 load_dotenv()
 
 from fastapi import FastAPI
-
+from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import health
 from app.api.routes import documents
 from app.rag.embedding import get_embedding_model
@@ -12,10 +15,27 @@ from app.rag.retriever import DocuMindRetriever
 from app.rag.vector_store import get_vector_store
 
 
-app = FastAPI(title="DocuMind API")
+logger = logging.getLogger(__name__)
 
+app = FastAPI(
+    title="DocuMind API",
+    description="Document Retrieval-Augmented Generation (RAG) System Engine",
+    version="1.0.0",
+)
+
+# Enable CORS for frontend integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include API Routers with v1 prefix
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
+
 
 @app.on_event("startup")
 def startup_event() -> None:
@@ -35,3 +55,9 @@ def startup_event() -> None:
         generator=generator,
         vector_store=vector_store,
     )
+    logger.info("DocuMind RAG Pipeline successfully loaded and attached to app.state.")
+    
+@app.on_event("shutdown")
+def shutdown_event() -> None:
+    """Clean up resources upon application shutdown."""
+    logger.info("Shutting down DocuMind API server...")
