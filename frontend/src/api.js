@@ -1,7 +1,7 @@
 // Base URL of the FastAPI backend. Override at build time with
 // VITE_API_BASE_URL if the API isn't running on localhost:8000.
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
-
+const API_BASE =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api/v1";
 /**
  * Reads a fetch Response as JSON and throws a readable Error if the
  * request failed, using the backend's {"detail": "..."} message when
