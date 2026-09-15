@@ -2,18 +2,21 @@ import logging
 
 from dotenv import load_dotenv
 import fastapi
-load_dotenv()
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from app.api.routes import health
 from app.api.routes import documents
+from app.db.session import Base, engine
+import app.db.models  # noqa: F401
 from app.rag.embedding import get_embedding_model
 from app.rag.llm import GroqProvider, LLMGenerator
 from app.rag.pipeline import RAGPipeline
 from app.rag.retriever import DocuMindRetriever
 from app.rag.vector_store import get_vector_store
 
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +43,14 @@ app.include_router(documents.router, prefix="/api/v1")
 @app.on_event("startup")
 def startup_event() -> None:
     """
-    Build the shared RAGPipeline instance once, at application startup,
-    and store it on app.state so every request reuses the same
-    embedding model, vector store connection, and LLM client instead
-    of recreating them on every call.
+    Initialize the database and build the shared RAGPipeline
+    once at application startup.
     """
+
+    # Create database tables if they do not already exist.
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables initialized successfully.")
+
     embedding_model = get_embedding_model()
     vector_store = get_vector_store(embedding_model=embedding_model)
     retriever = DocuMindRetriever(vector_store=vector_store)
@@ -55,8 +61,12 @@ def startup_event() -> None:
         generator=generator,
         vector_store=vector_store,
     )
-    logger.info("DocuMind RAG Pipeline successfully loaded and attached to app.state.")
-    
+
+    logger.info(
+        "DocuMind RAG Pipeline successfully loaded and attached to app.state."
+    )
+
+
 @app.on_event("shutdown")
 def shutdown_event() -> None:
     """Clean up resources upon application shutdown."""

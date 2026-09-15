@@ -4,17 +4,18 @@ services:
     image: mysql:8.0
     container_name: documind-db
     restart: always
+
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-documind_db}
       MYSQL_USER: ${MYSQL_USER:-documind_user}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-documind_pass}
-    ports:
-      - "3306:3306"
+
     volumes:
       - mysql_data:/var/lib/mysql
+
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -23,14 +24,20 @@ services:
     build:
       context: .
       dockerfile: app/Dockerfile
+
     container_name: documind-backend
     restart: always
+
     ports:
       - "8000:8000"
+
     environment:
       DATABASE_URL: mysql+pymysql://${MYSQL_USER:-documind_user}:${MYSQL_PASSWORD:-documind_pass}@db:3306/${MYSQL_DATABASE:-documind_db}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+
     volumes:
       - ./data:/app/data
+
     depends_on:
       db:
         condition: service_healthy
@@ -39,10 +46,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+
     container_name: documind-frontend
     restart: always
+
     ports:
       - "80:80"
+
     depends_on:
       - backend
 

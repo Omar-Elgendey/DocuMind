@@ -2,21 +2,24 @@
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+
 [project]
 name = "documind"
 version = "0.1.0"
 description = "An open-source AI document Retrieval-Augmented Generation assistant built with FastAPI, LangChain, ChromaDB, SQLAlchemy, and MySQL."
-requires-python = ">=3.10"
+requires-python = ">=3.11,<3.13"
+
 license = { text = "MIT" }
+
 authors = [
     { name = "Omar Mohamed Abdulraheim Elgendey" }
 ]
+
 dependencies = [
     # API & Web Framework
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.4",
     "python-multipart>=0.0.32",
-    "starlette>=1.6.0",
 
     # Settings & Environment
     "pydantic>=2.13.5",
@@ -27,11 +30,11 @@ dependencies = [
     "sqlalchemy>=2.0.52",
     "pymysql>=1.2.0",
 
-    # Vector Storage & Search
+    # Vector Storage
     "chromadb>=1.5.9",
     "langchain-chroma>=1.1.0",
 
-    # LangChain Ecosystem & Core Frameworks
+    # LangChain
     "langchain>=1.3.18",
     "langchain-community>=0.4.2",
     "langchain-core>=1.6.1",
@@ -40,37 +43,40 @@ dependencies = [
     "langgraph>=1.2.11",
     "langsmith>=0.12.0",
 
-    # LLM & Embedding Integrations
+    # LLM Integrations
     "google-genai>=2.21.0",
     "langchain-google-genai>=4.3.7",
     "groq>=0.37.1",
     "langchain-groq>=1.1.3",
+
+    # Embeddings / Transformers
     "langchain-huggingface>=1.2.2",
     "sentence-transformers>=6.0.1",
-    "tiktoken>=0.14.0",
     "transformers>=5.16.1",
-    "torch>=2.14.0",
+    # Tokenization
+    "tiktoken>=0.14.0",
 
-    # Document Loaders & Processors
+    # Document Processing
     "pypdf>=6.16.2",
     "pymupdf>=1.28.2",
     "docx2txt>=0.9",
     "python-pptx>=1.0.2",
     "openpyxl>=3.1.5",
-    "xlsxwriter>=3.2.9",
-    "jinja2>=3.1.6",
 
-    # Scientific & Data Utilities
-    "numpy>=2.5.2",
-    "pandas>=3.0.5",
-    "scikit-learn>=1.9.0",
-    "requests>=2.34.2",
-    "httpx>=0.28.1",
+    # Templates / HTTP
+    "jinja2>=3.1.6",
+    "requests>=2.31.0",
+    "httpx>=0.27.0",
+
+    # Scientific Computing
+    "numpy>=2.0,<3.0",
 ]
+
 
 [project.urls]
 Homepage = "https://github.com/OmarElgendey/DocuMind"
 Repository = "https://github.com/OmarElgendey/DocuMind"
+
 
 [dependency-groups]
 dev = [
@@ -78,6 +84,7 @@ dev = [
     "build>=1.6.0",
     "rich>=15.0.0",
 ]
+
 
 [tool.setuptools.packages.find]
 where = ["."]

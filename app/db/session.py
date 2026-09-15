@@ -15,16 +15,20 @@ DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
 DB_NAME = os.getenv("DB_NAME")
 
-if not all([DB_USER, DB_PASSWORD, DB_NAME]):
-    raise ValueError(
-        "Missing database configuration environment variables in .env file"
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+if not DATABASE_URL:
+    if not all([DB_USER, DB_PASSWORD, DB_NAME]):
+        raise ValueError(
+            "Missing database configuration. Set DATABASE_URL "
+            "or DB_USER, DB_PASSWORD, and DB_NAME."
+        )
+
+    DATABASE_URL = (
+        f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}"
+        f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     )
-
-
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}",
-)
 
 
 engine = create_engine(
@@ -53,4 +57,3 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
-
