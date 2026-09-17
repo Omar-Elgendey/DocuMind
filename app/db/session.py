@@ -31,11 +31,18 @@ if not DATABASE_URL:
     )
 
 
+DB_SSL_CA_PATH = os.getenv("DB_SSL_CA_PATH")
+
+connect_args = {}
+if DB_SSL_CA_PATH:
+    connect_args = {"ssl": {"ca": DB_SSL_CA_PATH}}
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
     pool_recycle=3600,
     echo=False,
+    connect_args=connect_args,
 )
 
 
