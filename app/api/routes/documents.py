@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, UploadFile, File, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_document_service
@@ -25,15 +25,38 @@ UPLOAD_DIR = os.getenv("UPLOAD_DIR", "./data/uploads")
 MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
 
 
+def require_session_id(
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
+) -> str:
+    """
+    Extract and validate the X-Session-ID header sent by the frontend.
+
+    Every document-scoped endpoint depends on this to make sure requests
+    are always tied to a specific browser session, so one session can
+    never see or act on another session's documents.
+
+    Raises:
+        HTTPException: 400 if the header is missing or empty.
+    """
+    if not x_session_id or not x_session_id.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing X-Session-ID header",
+        )
+    return x_session_id
+
+
 @router.post("", status_code=201)
 def upload_document(
     file: UploadFile = File(...),
+    session_id: str = Depends(require_session_id),
     db: Session = Depends(get_db),
     service: DocumentService = Depends(get_document_service),
 ) -> DocumentUploadResponse:
     """
     Upload a document file, ingest it into the RAG pipeline, and
-    persist its metadata and processing status in MySQL.
+    persist its metadata and processing status in MySQL, scoped to
+    the requesting session.
     """
     extension = Path(file.filename).suffix.lower()
 
@@ -66,6 +89,7 @@ def upload_document(
             document_id=document_id,
             filename=file.filename,
             file_path=file_path,
+            session_id=session_id,
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -73,6 +97,7 @@ def upload_document(
 
 @router.get("")
 def list_documents(
+    session_id: str = Depends(require_session_id),
     db: Session = Depends(get_db),
     service: DocumentService = Depends(get_document_service),
     status_filter: Optional[str] = Query(None, alias="status", description="Filter by document status"),
@@ -80,11 +105,13 @@ def list_documents(
     offset: int = Query(0, ge=0),
 ) -> list[DocumentResponse]:
     """
-    List documents with optional filtering by status and pagination.
+    List documents owned by the requesting session, with optional
+    filtering by status and pagination.
     """
     try:
         documents = service.list_documents(
             db=db,
+            session_id=session_id,
             status=status_filter,
             limit=limit,
             offset=offset,
@@ -105,14 +132,16 @@ def list_documents(
 @router.get("/{document_id}")
 def get_document(
     document_id: str,
+    session_id: str = Depends(require_session_id),
     db: Session = Depends(get_db),
     service: DocumentService = Depends(get_document_service),
 ) -> DocumentResponse:
     """
-    Retrieve details of a single document by its ID.
+    Retrieve details of a single document by its ID, scoped to the
+    requesting session.
     """
     try:
-        document = service.get_document(db=db, document_id=document_id)
+        document = service.get_document(db=db, document_id=document_id, session_id=session_id)
     except ValueError as ve:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -136,11 +165,12 @@ def get_document(
 @router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(
     document_id: str,
+    session_id: str = Depends(require_session_id),
     db: Session = Depends(get_db),
     service: DocumentService = Depends(get_document_service),
 ) -> None:
     try:
-        service.delete_document(db=db, document_id=document_id)
+        service.delete_document(db=db, document_id=document_id, session_id=session_id)
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve)) from ve
     except Exception as exc:
@@ -151,16 +181,19 @@ def delete_document(
 def chat_with_document(
     document_id: str,
     request: ChatRequest,
+    session_id: str = Depends(require_session_id),
     db: Session = Depends(get_db),
     service: DocumentService = Depends(get_document_service),
 ) -> ChatResponse:
     """
-    Query a completed document using the RAG pipeline.
+    Query a completed document using the RAG pipeline, scoped to the
+    requesting session.
     """
     try:
         result = service.chat(
             db=db,
             document_id=document_id,
+            session_id=session_id,
             question=request.question,
             top_k=request.top_k,
         )

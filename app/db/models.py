@@ -22,6 +22,11 @@ class Document(Base):
         nullable=False,
     )
 
+    session_id = Column(
+        String(64),
+        nullable=False,
+    )
+
     original_filename = Column(
         String(255),
         nullable=False,
@@ -75,5 +80,9 @@ class Document(Base):
         Index(
             "idx_documents_status",
             "status",
+        ),
+        Index(
+            "idx_documents_session",
+            "session_id",
         ),
     )

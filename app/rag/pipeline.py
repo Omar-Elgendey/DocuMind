@@ -49,16 +49,20 @@ class RAGPipeline:
     def ingest_document(
         self,
         file_path: str,
+        session_id: str,
         document_id: str | None = None,
         chunk_size: int = 1000,
         chunk_overlap: int = 200,
     ) -> dict[str, Any]:
         """
-        Load a file, split it into chunks tagged with a document_id,
-        and add those chunks to the vector store.
+        Load a file, split it into chunks tagged with a document_id and
+        session_id, and add those chunks to the vector store.
 
         Args:
             file_path: Path to the file to ingest (pdf, docx, pptx, or txt).
+            session_id: Identifier of the session that owns this document.
+                Stamped into every chunk's metadata so retrieval can be
+                scoped to the owning session.
             document_id: Optional identifier for the document. If not
                 provided, a new UUID4 is generated.
             chunk_size: Maximum number of characters per chunk.
@@ -69,20 +73,24 @@ class RAGPipeline:
             'chunks_count' (int).
 
         Raises:
-            ValueError: If file_path or the resulting chunk_size/chunk_overlap
-                combination is invalid.
+            ValueError: If file_path, session_id, or the resulting
+                chunk_size/chunk_overlap combination is invalid.
             RuntimeError: If loading, splitting, or storing the document fails.
         """
 
         if not file_path or not file_path.strip():
             raise ValueError("file_path must not be empty.")
 
+        if not session_id or not session_id.strip():
+            raise ValueError("session_id must not be empty.")
+
         effective_document_id = document_id or str(uuid.uuid4())
 
         logger.info(
-            "Starting ingestion for '%s' with document_id=%s",
+            "Starting ingestion for '%s' with document_id=%s, session_id=%s",
             file_path,
             effective_document_id,
+            session_id,
         )
 
         raw_documents: list[Document] = UniversalLoader(file_path).load()
@@ -93,6 +101,9 @@ class RAGPipeline:
             chunk_overlap=chunk_overlap,
             document_id=effective_document_id,
         )
+
+        for chunk in chunks:
+            chunk.metadata["session_id"] = session_id
 
         if not chunks:
             logger.warning(

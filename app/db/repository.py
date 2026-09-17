@@ -15,6 +15,7 @@ def create_pending_document(
     document_id: str,
     original_filename: str,
     file_path: str,
+    session_id: str,
 ) -> Document:
     """
     Insert a new document row with status='pending'.
@@ -24,12 +25,13 @@ def create_pending_document(
         document_id: Unique identifier string for the document.
         original_filename: The original name of the uploaded file.
         file_path: File system storage path for the uploaded file.
+        session_id: Identifier of the browser/session that owns this document.
 
     Returns:
         The newly created Document ORM object.
 
     Raises:
-        ValueError: If document_id, original_filename, or file_path is empty or whitespace.
+        ValueError: If document_id, original_filename, file_path, or session_id is empty or whitespace.
         RuntimeError: If a database error occurs during commit.
     """
     if not document_id or not document_id.strip():
@@ -38,11 +40,14 @@ def create_pending_document(
         raise ValueError("original_filename must not be empty.")
     if not file_path or not file_path.strip():
         raise ValueError("file_path must not be empty.")
+    if not session_id or not session_id.strip():
+        raise ValueError("session_id must not be empty.")
 
     document = Document(
         id=document_id,
         original_filename=original_filename,
         file_path=file_path,
+        session_id=session_id,
         status=DocumentStatus.PENDING.value,
     )
 
@@ -221,27 +226,33 @@ def soft_delete_document(
 def get_document(
     db: Session,
     document_id: str,
+    session_id: str,
 ) -> Document | None:
     """
-    Retrieve an active (non-deleted) document by its unique ID.
+    Retrieve an active (non-deleted) document by its unique ID, scoped to
+    the owning session so callers can never fetch another session's document.
 
     Args:
         db: SQLAlchemy database session.
         document_id: Unique identifier of the document to retrieve.
+        session_id: Identifier of the session that must own the document.
 
     Returns:
-        The Document ORM object if found and active, otherwise None.
+        The Document ORM object if found, active, and owned by session_id, otherwise None.
 
     Raises:
-        ValueError: If document_id is empty or whitespace.
+        ValueError: If document_id or session_id is empty or whitespace.
         RuntimeError: If a database query or connection error occurs.
     """
     if not document_id or not document_id.strip():
         raise ValueError("document_id must not be empty.")
+    if not session_id or not session_id.strip():
+        raise ValueError("session_id must not be empty.")
 
     try:
         stmt = select(Document).where(
             Document.id == document_id,
+            Document.session_id == session_id,
             Document.deleted_at.is_(None),
         )
         return db.scalars(stmt).first()
@@ -254,26 +265,34 @@ def get_document(
 
 def list_documents(
     db: Session,
+    session_id: str,
     status: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[Document]:
     """
-    List active (non-deleted) documents with optional status filtering and pagination.
+    List active (non-deleted) documents owned by a specific session, with
+    optional status filtering and pagination.
 
     Args:
         db: SQLAlchemy database session.
+        session_id: Identifier of the session whose documents should be listed.
         status: Optional status string to filter by (must be a valid DocumentStatus value).
         limit: Maximum number of records to return (default 50, must be > 0).
         offset: Number of records to skip (default 0, must be >= 0).
 
     Returns:
-        A list of active Document ORM objects, ordered by creation date descending.
+        A list of active Document ORM objects owned by session_id, ordered by
+        creation date descending.
 
     Raises:
-        ValueError: If status is invalid, or if limit/offset parameters are out of range.
+        ValueError: If session_id is empty, status is invalid, or limit/offset
+            parameters are out of range.
         RuntimeError: If a database query or connection error occurs.
     """
+    if not session_id or not session_id.strip():
+        raise ValueError("session_id must not be empty.")
+
     if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
         raise ValueError("limit must be a positive integer.")
 
@@ -288,7 +307,10 @@ def list_documents(
             )
 
     try:
-        stmt = select(Document).where(Document.deleted_at.is_(None))
+        stmt = select(Document).where(
+            Document.deleted_at.is_(None),
+            Document.session_id == session_id,
+        )
 
         if status is not None:
             stmt = stmt.where(Document.status == status)

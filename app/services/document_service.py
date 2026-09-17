@@ -32,13 +32,15 @@ class DocumentService:
         document_id: str,
         filename: str,
         file_path: str,
+        session_id: str,
     ) -> Dict[str, Any]:
         """
         Orchestrate the end-to-end ingestion flow for a document.
 
         State Flow:
-        1. Create document record in MySQL with status 'PENDING'.
-        2. Run RAG pipeline ingestion (loading, splitting, vector embedding).
+        1. Create document record in MySQL with status 'PENDING', tagged with session_id.
+        2. Run RAG pipeline ingestion (loading, splitting, vector embedding),
+           stamping every chunk with both document_id and session_id.
         3. On Success: Update document status to 'COMPLETED' with chunk count.
         4. On Exception: Update document status to 'FAILED' with error details and re-raise.
 
@@ -47,6 +49,7 @@ class DocumentService:
             document_id: Unique UUID string representing the document.
             filename: Original file name uploaded by the user.
             file_path: Local disk path where the file is stored.
+            session_id: Identifier of the session that owns this document.
 
         Returns:
             Dict[str, Any]: Summary dictionary containing "document_id" and "chunks_count".
@@ -56,13 +59,19 @@ class DocumentService:
             RuntimeError: Propagated if database operations or pipeline execution fails.
             Exception: Re-raises any unhandled pipeline/database exceptions after logging state.
         """
-        logger.info("Registering document '%s' (ID: %s) as PENDING.", filename, document_id)
+        logger.info(
+            "Registering document '%s' (ID: %s, session: %s) as PENDING.",
+            filename,
+            document_id,
+            session_id,
+        )
 
         repository.create_pending_document(
             db=db,
             document_id=document_id,
             original_filename=filename,
             file_path=file_path,
+            session_id=session_id,
         )
 
         try:
@@ -70,6 +79,7 @@ class DocumentService:
             ingestion_result: Dict[str, Any] = self.pipeline.ingest_document(
                 document_id=document_id,
                 file_path=file_path,
+                session_id=session_id,
             )
 
             chunks_count: int = ingestion_result.get("chunks_count", 0)
@@ -103,7 +113,7 @@ class DocumentService:
                 document_id=document_id,
                 error_message=error_message,
             )
-            
+
             if os.path.exists(file_path):
                 logger.info("Cleaning up file after failed ingestion: %s", file_path)
                 os.remove(file_path)
@@ -112,28 +122,31 @@ class DocumentService:
     def list_documents(
         self,
         db: Session,
+        session_id: str,
         status: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> List[Document]:
         """
-        Retrieve a paginated list of active (non-deleted) documents.
+        Retrieve a paginated list of active (non-deleted) documents owned by session_id.
 
         Args:
             db: Active SQLAlchemy session provided by the API layer.
+            session_id: Identifier of the session whose documents should be listed.
             status: Optional status filter (must be a valid DocumentStatus value).
             limit: Maximum number of records to return.
             offset: Number of records to skip.
 
         Returns:
-            List[Document]: A list of active Document ORM objects.
+            List[Document]: A list of active Document ORM objects owned by session_id.
 
         Raises:
-            ValueError: Propagated if status/limit/offset validation fails.
+            ValueError: Propagated if session_id/status/limit/offset validation fails.
             RuntimeError: Propagated if the database query fails.
         """
         return repository.list_documents(
             db=db,
+            session_id=session_id,
             status=status,
             limit=limit,
             offset=offset,
@@ -143,36 +156,40 @@ class DocumentService:
         self,
         db: Session,
         document_id: str,
+        session_id: str,
     ) -> Optional[Document]:
         """
-        Retrieve a single active (non-deleted) document by its ID.
+        Retrieve a single active (non-deleted) document by its ID, scoped to session_id.
 
         Args:
             db: Active SQLAlchemy session provided by the API layer.
             document_id: Unique identifier of the document to retrieve.
+            session_id: Identifier of the session that must own the document.
 
         Returns:
-            Optional[Document]: The Document ORM object if found, else None.
+            Optional[Document]: The Document ORM object if found and owned by session_id, else None.
 
         Raises:
-            ValueError: Propagated if document_id is empty or whitespace.
+            ValueError: Propagated if document_id or session_id is empty or whitespace.
             RuntimeError: Propagated if the database query fails.
         """
         return repository.get_document(
             db=db,
             document_id=document_id,
+            session_id=session_id,
         )
 
     def delete_document(
         self,
         db: Session,
         document_id: str,
+        session_id: str,
     ) -> None:
         """
-        Orchestrate the end-to-end deletion flow for a document.
+        Orchestrate the end-to-end deletion flow for a document owned by session_id.
 
         Deletion Flow:
-        1. Fetch the document record to obtain its file_path.
+        1. Fetch the document record (scoped to session_id) to obtain its file_path.
         2. Delete all associated chunks from ChromaDB.
         3. Delete the file from the filesystem, if it still exists.
         4. Soft delete the document record in MySQL (final step).
@@ -185,13 +202,14 @@ class DocumentService:
         Args:
             db: Active SQLAlchemy session provided by the API layer.
             document_id: Unique identifier of the document to delete.
+            session_id: Identifier of the session that must own the document.
 
         Raises:
-            ValueError: If no active document exists with the given ID.
+            ValueError: If no active document owned by session_id exists with the given ID.
             RuntimeError: Propagated if Chroma deletion or the final
                 MySQL soft delete fails.
         """
-        document = repository.get_document(db=db, document_id=document_id)
+        document = repository.get_document(db=db, document_id=document_id, session_id=session_id)
 
         if document is None:
             raise ValueError(f"No active document found with id={document_id}")
@@ -212,18 +230,20 @@ class DocumentService:
         repository.soft_delete_document(db=db, document_id=document_id)
 
         logger.info("Document ID %s successfully deleted.", document_id)
-        
+
     def chat(
         self,
         db: Session,
         document_id: str,
+        session_id: str,
         question: str,
         top_k: int = 5,
     ) -> dict:
         """
-        Query a completed document using the RAG pipeline.
+        Query a completed document using the RAG pipeline, scoped to session_id
+        so a chat can never be answered from another session's document chunks.
         """
-        document = repository.get_document(db=db, document_id=document_id)
+        document = repository.get_document(db=db, document_id=document_id, session_id=session_id)
 
         if document is None:
             raise ValueError(f"No active document found with id={document_id}")
@@ -236,5 +256,5 @@ class DocumentService:
         return self.pipeline.run(
             query=question,
             top_k=top_k,
-            filter={"document_id": document_id},
+            filter={"document_id": document_id, "session_id": session_id},
         )
