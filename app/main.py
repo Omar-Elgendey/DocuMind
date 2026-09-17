@@ -1,4 +1,5 @@
 import logging
+import os
 
 from dotenv import load_dotenv
 import fastapi
@@ -26,10 +27,18 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# Parse CORS_ORIGINS from Railway variables
+cors_origins_raw = os.getenv("CORS_ORIGINS", "")
+origins = [origin.strip() for origin in cors_origins_raw.split(",") if origin.strip()]
+
+# Fallback to wildcard if no specific origins configured
+if not origins:
+    origins = ["*"]
+
 # Enable CORS for frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
