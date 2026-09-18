@@ -1,44 +1,46 @@
 import os
 from functools import lru_cache
 
-from langchain_huggingface import HuggingFaceEmbeddings
-
+from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 
 DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
 
 
 @lru_cache(maxsize=None)
-def _load_embedding_model(model_name: str) -> HuggingFaceEmbeddings:
+def _load_embedding_model(model_name: str) -> HuggingFaceInferenceAPIEmbeddings:
     """
-    Load and cache a HuggingFaceEmbeddings instance for a given model name.
+    Load and cache a HuggingFaceInferenceAPIEmbeddings instance for a given model name.
 
-    This is the expensive step (downloading/loading model weights into
-    memory), so it is wrapped with lru_cache to ensure the model is
-    loaded only once per process, regardless of how many times
-    get_embedding_model() is called.
+    This offloads model execution to Hugging Face Inference API, saving CPU and RAM
+    usage on the hosting server.
     """
-    return HuggingFaceEmbeddings(
+    hf_token = os.getenv("HF_TOKEN")
+    if not hf_token:
+        raise RuntimeError("HF_TOKEN environment variable is missing!")
+
+    return HuggingFaceInferenceAPIEmbeddings(
+        api_key=hf_token,
         model_name=model_name,
-        encode_kwargs={"normalize_embeddings": True},
     )
 
 
 def get_embedding_model(
     model_name: str | None = None,
-) -> HuggingFaceEmbeddings:
+) -> HuggingFaceInferenceAPIEmbeddings:
     """
-    Initialize and return the configured Hugging Face embedding model.
+    Initialize and return the configured Hugging Face Inference API embedding model.
 
     The underlying model is cached in-process (see _load_embedding_model),
     so repeated calls with the same effective model name are cheap and
-    do not reload the model from disk/network.
+    do not reload the model instance.
 
     Args:
         model_name: Optional embedding model name. If not provided,
             the EMBEDDING_MODEL_NAME environment variable is used.
             Otherwise, the default model is intfloat/multilingual-e5-small.
+
     Returns:
-        An initialized HuggingFaceEmbeddings instance.
+        An initialized HuggingFaceInferenceAPIEmbeddings instance.
 
     Raises:
         RuntimeError: If the embedding model cannot be initialized.
@@ -58,10 +60,10 @@ def get_embedding_model(
 
 def embed_documents(
     texts: list[str],
-    model: HuggingFaceEmbeddings | None = None,
+    model: HuggingFaceInferenceAPIEmbeddings | None = None,
 ) -> list[list[float]]:
     """
-    Generate embeddings for multiple document chunks.
+    Generate embeddings for multiple document chunks with E5 passage prefix.
 
     Args:
         texts: List of document chunks to embed.
@@ -78,18 +80,21 @@ def embed_documents(
 
     model = model or get_embedding_model()
 
+    # E5 models require 'passage: ' prefix for document chunks
+    formatted_texts = [f"passage: {t}" for t in texts]
+
     try:
-        return model.embed_documents(texts)
+        return model.embed_documents(formatted_texts)
     except Exception as exc:
         raise RuntimeError("Failed to generate document embeddings.") from exc
 
 
 def embed_query(
     text: str,
-    model: HuggingFaceEmbeddings | None = None,
+    model: HuggingFaceInferenceAPIEmbeddings | None = None,
 ) -> list[float]:
     """
-    Generate an embedding for a user query.
+    Generate an embedding for a user query with E5 query prefix.
 
     Args:
         text: User query text.
@@ -107,7 +112,10 @@ def embed_query(
 
     model = model or get_embedding_model()
 
+    # E5 models require 'query: ' prefix for input queries
+    formatted_text = f"query: {text}"
+
     try:
-        return model.embed_query(text)
+        return model.embed_query(formatted_text)
     except Exception as exc:
         raise RuntimeError("Failed to generate query embedding.") from exc
