@@ -53,10 +53,27 @@ class DocuMindRetriever(BaseRetriever):
                 self.top_k,
             )
 
+            # --- بداية التعديل المطلوب لـ ChromaDB ---
+            formatted_filter = None
+            if self.metadata_filter:
+                # 1. استبعاد أي عناصر بقيمة None أو فارغة
+                clean_filter = {
+                    k: v for k, v in self.metadata_filter.items() if v is not None
+                }
+
+                # 2. تغليف الفلتر ليكون متوافقاً مع قواعد ChromaDB
+                if len(clean_filter) == 1:
+                    formatted_filter = clean_filter
+                elif len(clean_filter) > 1:
+                    formatted_filter = {
+                        "$and": [{k: v} for k, v in clean_filter.items()]
+                    }
+            # --- نهاية التعديل ---
+
             results = similarity_search(
                 query=query,
                 top_k=self.top_k,
-                filter=self.metadata_filter,
+                filter=formatted_filter,  # تم تمرير الفلتر المعالج هنا
                 vector_store=self.vector_store,
             )
 
