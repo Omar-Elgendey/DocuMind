@@ -69,14 +69,11 @@ Ask a Question
       ↓
 Generate Grounded Response
 ```
+###  Screenshots & Demo
 
-### Screenshots
+![App Screenshot](./docs/chat.png)
 
-![App Screenshot](docs/chat.png)
-
-<video src="docs/screen.mp4" controls width="100%"></video>
-
----
+<video src="./docs/screen.mp4" controls width="100%"></video>
 
 ## Features
 
