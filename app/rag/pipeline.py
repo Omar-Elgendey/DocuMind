@@ -159,18 +159,8 @@ class RAGPipeline:
             LLMGenerationError: Propagated if LLM generation fails.
         """
 
-        # Format filter for ChromaDB compatibility ($and operator for multiple metadata conditions)
-        formatted_filter = None
-        if filter:
-            if "$and" in filter or "$or" in filter:
-                formatted_filter = filter
-            elif len(filter) > 1:
-                formatted_filter = {"$and": [{k: v} for k, v in filter.items()]}
-            else:
-                formatted_filter = filter
-
         effective_retriever = self.retriever.model_copy(
-            update={"top_k": top_k, "metadata_filter": formatted_filter}
+            update={"top_k": top_k, "metadata_filter": filter}
         )
         documents: list[Document] = effective_retriever.invoke(query)
 
