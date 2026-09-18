@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from typing import List, Optional
 
 from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
 
@@ -25,7 +26,7 @@ def _load_embedding_model(model_name: str) -> HuggingFaceInferenceAPIEmbeddings:
 
 
 def get_embedding_model(
-    model_name: str | None = None,
+    model_name: Optional[str] = None,
 ) -> HuggingFaceInferenceAPIEmbeddings:
     """
     Initialize and return the configured Hugging Face Inference API embedding model.
@@ -54,14 +55,14 @@ def get_embedding_model(
         return _load_embedding_model(effective_model_name)
     except Exception as exc:
         raise RuntimeError(
-            f"Failed to initialize embedding model '{effective_model_name}'."
+            f"Failed to initialize embedding model '{effective_model_name}': {exc}"
         ) from exc
 
 
 def embed_documents(
-    texts: list[str],
-    model: HuggingFaceInferenceAPIEmbeddings | None = None,
-) -> list[list[float]]:
+    texts: List[str],
+    model: Optional[HuggingFaceInferenceAPIEmbeddings] = None,
+) -> List[List[float]]:
     """
     Generate embeddings for multiple document chunks with E5 passage prefix.
 
@@ -86,13 +87,13 @@ def embed_documents(
     try:
         return model.embed_documents(formatted_texts)
     except Exception as exc:
-        raise RuntimeError("Failed to generate document embeddings.") from exc
+        raise RuntimeError(f"Failed to generate document embeddings: {exc}") from exc
 
 
 def embed_query(
     text: str,
-    model: HuggingFaceInferenceAPIEmbeddings | None = None,
-) -> list[float]:
+    model: Optional[HuggingFaceInferenceAPIEmbeddings] = None,
+) -> List[float]:
     """
     Generate an embedding for a user query with E5 query prefix.
 
@@ -118,4 +119,4 @@ def embed_query(
     try:
         return model.embed_query(formatted_text)
     except Exception as exc:
-        raise RuntimeError("Failed to generate query embedding.") from exc
+        raise RuntimeError(f"Failed to generate query embedding: {exc}") from exc
