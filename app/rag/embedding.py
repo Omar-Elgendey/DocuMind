@@ -2,49 +2,28 @@ import os
 from functools import lru_cache
 from typing import List, Optional
 
-from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
-DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
 @lru_cache(maxsize=None)
-def _load_embedding_model(model_name: str) -> HuggingFaceInferenceAPIEmbeddings:
+def _load_embedding_model(model_name: str) -> HuggingFaceEmbeddings:
     """
-    Load and cache a HuggingFaceInferenceAPIEmbeddings instance for a given model name.
-
-    This offloads model execution to Hugging Face Inference API, saving CPU and RAM
-    usage on the hosting server.
+    Load and cache a HuggingFaceEmbeddings instance for a given model name.
     """
-    hf_token = os.getenv("HF_TOKEN")
-    if not hf_token:
-        raise RuntimeError("HF_TOKEN environment variable is missing!")
-
-    return HuggingFaceInferenceAPIEmbeddings(
-        api_key=hf_token,
+    return HuggingFaceEmbeddings(
         model_name=model_name,
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True},
     )
 
 
 def get_embedding_model(
     model_name: Optional[str] = None,
-) -> HuggingFaceInferenceAPIEmbeddings:
+) -> HuggingFaceEmbeddings:
     """
-    Initialize and return the configured Hugging Face Inference API embedding model.
-
-    The underlying model is cached in-process (see _load_embedding_model),
-    so repeated calls with the same effective model name are cheap and
-    do not reload the model instance.
-
-    Args:
-        model_name: Optional embedding model name. If not provided,
-            the EMBEDDING_MODEL_NAME environment variable is used.
-            Otherwise, the default model is intfloat/multilingual-e5-small.
-
-    Returns:
-        An initialized HuggingFaceInferenceAPIEmbeddings instance.
-
-    Raises:
-        RuntimeError: If the embedding model cannot be initialized.
+    Initialize and return the configured Hugging Face embedding model.
     """
     effective_model_name = model_name or os.getenv(
         "EMBEDDING_MODEL_NAME",
@@ -61,62 +40,35 @@ def get_embedding_model(
 
 def embed_documents(
     texts: List[str],
-    model: Optional[HuggingFaceInferenceAPIEmbeddings] = None,
+    model: Optional[HuggingFaceEmbeddings] = None,
 ) -> List[List[float]]:
     """
-    Generate embeddings for multiple document chunks with E5 passage prefix.
-
-    Args:
-        texts: List of document chunks to embed.
-        model: Optional pre-initialized embedding model.
-
-    Returns:
-        A list of embedding vectors in the same order as the input chunks.
-
-    Raises:
-        RuntimeError: If embedding generation fails.
+    Generate embeddings for multiple document chunks.
     """
     if not texts:
         return []
 
     model = model or get_embedding_model()
 
-    # E5 models require 'passage: ' prefix for document chunks
-    formatted_texts = [f"passage: {t}" for t in texts]
-
     try:
-        return model.embed_documents(formatted_texts)
+        return model.embed_documents(texts)
     except Exception as exc:
         raise RuntimeError(f"Failed to generate document embeddings: {exc}") from exc
 
 
 def embed_query(
     text: str,
-    model: Optional[HuggingFaceInferenceAPIEmbeddings] = None,
+    model: Optional[HuggingFaceEmbeddings] = None,
 ) -> List[float]:
     """
-    Generate an embedding for a user query with E5 query prefix.
-
-    Args:
-        text: User query text.
-        model: Optional pre-initialized embedding model.
-
-    Returns:
-        A single embedding vector.
-
-    Raises:
-        ValueError: If the query is empty or whitespace-only.
-        RuntimeError: If embedding generation fails.
+    Generate an embedding for a user query.
     """
     if not text or not text.strip():
         raise ValueError("Query text cannot be empty or whitespace-only.")
 
     model = model or get_embedding_model()
 
-    # E5 models require 'query: ' prefix for input queries
-    formatted_text = f"query: {text}"
-
     try:
-        return model.embed_query(formatted_text)
+        return model.embed_query(text)
     except Exception as exc:
         raise RuntimeError(f"Failed to generate query embedding: {exc}") from exc
