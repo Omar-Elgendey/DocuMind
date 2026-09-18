@@ -2,26 +2,29 @@ import os
 from functools import lru_cache
 from typing import List, Optional
 
-from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
-@lru_cache(maxsize=1)
-def _load_embedding_model(model_name: str) -> HuggingFaceInferenceAPIEmbeddings:
-    hf_token = os.getenv("HF_TOKEN")
-    if not hf_token:
-        raise RuntimeError("HF_TOKEN environment variable is missing!")
-
-    return HuggingFaceInferenceAPIEmbeddings(
-        api_key=hf_token,
+@lru_cache(maxsize=None)
+def _load_embedding_model(model_name: str) -> HuggingFaceEmbeddings:
+    """
+    Load and cache a HuggingFaceEmbeddings instance for a given model name.
+    """
+    return HuggingFaceEmbeddings(
         model_name=model_name,
+        model_kwargs={"device": "cpu"},
+        encode_kwargs={"normalize_embeddings": True},
     )
 
 
 def get_embedding_model(
     model_name: Optional[str] = None,
-) -> HuggingFaceInferenceAPIEmbeddings:
+) -> HuggingFaceEmbeddings:
+    """
+    Initialize and return the configured Hugging Face embedding model.
+    """
     effective_model_name = model_name or os.getenv(
         "EMBEDDING_MODEL_NAME",
         DEFAULT_EMBEDDING_MODEL,
@@ -37,8 +40,11 @@ def get_embedding_model(
 
 def embed_documents(
     texts: List[str],
-    model: Optional[HuggingFaceInferenceAPIEmbeddings] = None,
+    model: Optional[HuggingFaceEmbeddings] = None,
 ) -> List[List[float]]:
+    """
+    Generate embeddings for multiple document chunks.
+    """
     if not texts:
         return []
 
@@ -52,8 +58,11 @@ def embed_documents(
 
 def embed_query(
     text: str,
-    model: Optional[HuggingFaceInferenceAPIEmbeddings] = None,
+    model: Optional[HuggingFaceEmbeddings] = None,
 ) -> List[float]:
+    """
+    Generate an embedding for a user query.
+    """
     if not text or not text.strip():
         raise ValueError("Query text cannot be empty or whitespace-only.")
 
