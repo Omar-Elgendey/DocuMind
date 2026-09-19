@@ -508,6 +508,9 @@ The current version focuses on the core document-RAG workflow rather than:
 
 ---
 
+## Performance Notes
+
+The embedding layer uses `fastembed` (ONNX Runtime) rather than PyTorch-based embedding libraries such as `sentence-transformers`. This choice was made specifically to minimize CPU inference time on resource-constrained hosting environments (e.g., free-tier cloud plans), where PyTorch's overhead can turn a sub-second operation into a multi-second bottleneck.
 ## Future Improvements
 
 Possible extensions include:
