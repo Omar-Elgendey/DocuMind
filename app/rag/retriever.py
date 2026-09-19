@@ -1,11 +1,13 @@
 import logging
+import time
 from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import Field
 
-from app.rag.vector_store import similarity_search
+from app.rag.embedding import embed_query, get_embedding_model
+from app.rag.vector_store import similarity_search_by_vector
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +68,21 @@ class DocuMindRetriever(BaseRetriever):
                         "$and": [{k: v} for k, v in clean_filter.items()]
                     }
 
-            results = similarity_search(
-                query=query,
+            # --- DIAGNOSTIC TIMING (temporary) ---
+            t0 = time.perf_counter()
+            query_embedding = embed_query(query, model=get_embedding_model())
+            t1 = time.perf_counter()
+            logger.info("EMBEDDING took %.3f seconds", t1 - t0)
+
+            results = similarity_search_by_vector(
+                query_embedding=query_embedding,
                 top_k=self.top_k,
                 filter=formatted_filter,
                 vector_store=self.vector_store,
             )
+            t2 = time.perf_counter()
+            logger.info("CHROMA SEARCH took %.3f seconds", t2 - t1)
+            # --- END DIAGNOSTIC TIMING ---
 
             logger.info(
                 "Retrieval finished, got %d results",

@@ -197,6 +197,71 @@ def similarity_search(
         ) from exc
 
 
+def similarity_search_by_vector(
+    query_embedding: list[float],
+    top_k: int = 4,
+    filter: dict | None = None,
+    vector_store: Chroma | None = None,
+    embedding_model=None,
+    persist_directory: str = DEFAULT_PERSIST_DIRECTORY,
+    collection_name: str = DEFAULT_COLLECTION_NAME,
+) -> list[tuple[Document, float]]:
+    """
+    Perform similarity search using a pre-computed query embedding,
+    bypassing Chroma's internal embedding step.
+
+    This is used to measure embedding time and Chroma search time
+    separately for performance diagnostics. Functionally equivalent
+    to similarity_search(), but takes an already-computed vector
+    instead of raw query text.
+
+    Args:
+        query_embedding: Pre-computed embedding vector for the query.
+        top_k: Number of results to return.
+        filter: Optional metadata filter.
+        vector_store: Optional pre-initialized vector store.
+        embedding_model: Optional pre-initialized embedding model,
+            used only if vector_store is not provided.
+        persist_directory: Local Chroma persistence path.
+        collection_name: Chroma collection name.
+
+    Returns:
+        A list of documents and their similarity scores.
+
+    Raises:
+        ValueError: If query_embedding is empty or top_k is invalid.
+        RuntimeError: If the search fails.
+    """
+    if not query_embedding:
+        raise ValueError(
+            "query_embedding cannot be empty."
+        )
+
+    if not isinstance(top_k, int) or isinstance(top_k, bool) or top_k <= 0:
+        raise ValueError(
+            "top_k must be a positive integer greater than zero."
+        )
+
+    if vector_store is None:
+        vector_store = get_vector_store(
+            embedding_model=embedding_model,
+            persist_directory=persist_directory,
+            collection_name=collection_name,
+        )
+
+    try:
+        return vector_store.similarity_search_by_vector_with_relevance_scores(
+            embedding=query_embedding,
+            k=top_k,
+            filter=filter,
+        )
+
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to execute similarity search by vector."
+        ) from exc
+
+
 def delete_documents_by_id(
     document_id: str,
     vector_store: Chroma | None = None,
