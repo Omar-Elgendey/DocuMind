@@ -8,13 +8,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml .
 
-# Install CPU-only PyTorch
-RUN pip install --no-cache-dir \
-  --retries 10 \
-  --timeout 120 \
-  torch \
-  --index-url https://download.pytorch.org/whl/cpu
-
 # Install project dependencies
 RUN pip install --no-cache-dir \
   --retries 10 \
